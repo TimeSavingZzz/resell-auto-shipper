@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily cookie validity probe (oneshot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=reseller
+WorkingDirectory=/opt/resell-shipper
+Environment=PYTHONUNBUFFERED=1
+# 探测失效/风控时退出码 1（oneshot 无碍）；日志进 journal
+ExecStart=/opt/resell-shipper/.venv/bin/python -m app.cookiewatch
+
+[Install]
+WantedBy=multi-user.target

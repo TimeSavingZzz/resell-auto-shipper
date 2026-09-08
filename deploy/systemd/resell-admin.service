@@ -1,0 +1,17 @@
+[Unit]
+Description=Web admin control page (Flask)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 建议经 nginx/宝塔 HTTPS 反向代理到 http://127.0.0.1:8788
+User=reseller
+WorkingDirectory=/opt/resell-shipper
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/resell-shipper/.venv/bin/python -m app.control
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

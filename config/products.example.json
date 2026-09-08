@@ -1,0 +1,22 @@
+{
+  "min_online": 2,
+  "products": {
+    "demo-note-pack": {
+      "key": "demo-note-pack",
+      "name": "示例·考点速记电子版",
+      "enabled": true,
+      "message": "你好，资料已发你：网盘分享口令/链接（此处换成你自己的真实分享口令 + 使用说明）。\n收到请确认，谢谢惠顾。\n→ 整段 message 替换成你真实的交付文案。",
+      "source_item_id": "2000000000000",
+      "aliases": [],
+      "listing": {
+        "title": "示例·考点速记电子版",
+        "description": "【拍下自动发货】数字资料《示例·考点速记》，付款后系统会自动在平台会话发你下载方式，请留意查收。",
+        "images": [
+          "把此处替换成你真实在售商品图 URL（示例域名为 https://example.com/img/cover.jpg）"
+        ],
+        "price": "1",
+        "delivery": "无需邮寄"
+      }
+    }
+  }
+}

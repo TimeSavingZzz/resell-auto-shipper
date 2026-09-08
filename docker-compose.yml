@@ -1,0 +1,36 @@
+# 两个独立进程共享同一镜像与 config/data/logs 卷：
+#   bot   —— WebSocket 监听 + 自动发货/自动补货（长连接，唯一持有 ws）
+#   admin —— Flask 管理页（短连接 HTTP），写 products.json / .env + control.json
+# 提示：写操作动作（backfill / autoship）在 admin 进程内执行，真实发布前会二次确认。
+# 管理页建议放 nginx HTTPS 反向代理后访问；不要直接暴露公网。
+services:
+  bot:
+    build: .
+    image: resell-auto-shipper:latest
+    command: ["python", "-m", "app.main"]
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./.env:/app/.env
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./logs:/app/logs
+    stop_grace_period: 10s
+
+  admin:
+    build: .
+    image: resell-auto-shipper:latest
+    command: ["python", "-m", "app.control"]
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CONTROL_HOST=0.0.0.0
+    ports:
+      - "${CONTROL_HOST:-127.0.0.1}:${CONTROL_PORT:-8788}:8788"
+    volumes:
+      - ./.env:/app/.env
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./logs:/app/logs
+    stop_grace_period: 5s

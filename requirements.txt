@@ -1,0 +1,5 @@
+websockets>=14.0
+requests>=2.31
+loguru>=0.7
+python-dotenv>=1.0
+flask>=3.0

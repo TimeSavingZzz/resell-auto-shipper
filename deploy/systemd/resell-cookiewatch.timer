@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily cookie validity probe timer (daily ~10:17)
+Requires=resell-cookiewatch.service
+
+[Timer]
+# 每天上午 ~10:17 探测一次（错开整点 + 随机延迟，避免对平台产生规律性探测）
+OnCalendar=*-*-* 10:17:00
+Persistent=true
+RandomizedDelaySec=1200
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=Auto-ship bot (WebSocket listener + autoship + autorelist)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 替换为实际部署目录与专用用户（建议普通用户，勿用 root）
+User=reseller
+WorkingDirectory=/opt/resell-shipper
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/resell-shipper/.venv/bin/python -m app.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

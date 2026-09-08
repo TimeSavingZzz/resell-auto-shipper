@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+config.json
+config/products.json
+logs/
+*.db
+tests/fixtures/live_events/
+.pytest_cache/
+capture_*.json
