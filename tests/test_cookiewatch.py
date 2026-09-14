@@ -35,7 +35,7 @@ def test_session_expired_alerts_and_exit_1():
     assert len(n.calls) == 1
     kind, title, text = n.calls[0]
     assert kind == "cookie_expired"
-    assert "失效" in title and "每日检测" in title
+    assert "失效" in title and "定时检测" in title
     assert "Session过期" in text
 
 

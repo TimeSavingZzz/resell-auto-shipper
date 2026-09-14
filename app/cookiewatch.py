@@ -1,6 +1,6 @@
-"""每日主动探测 Cookie 有效性（独立于 bot 的兜底检测）。
+"""定时主动探测 Cookie 有效性（独立于 bot 的兜底检测）。
 
-配合 systemd timer（每天一次）运行；也可手动 `python -m app.cookiewatch` 跑一次。
+配合 systemd timer（默认每 12 小时一次）运行；也可手动 `python -m app.cookiewatch` 跑一次。
 
 判定规则：
 - 业务性失效（session 过期 / RGV587 风控 / 令牌非法等 TokenFetchError）
@@ -39,7 +39,7 @@ def probe(
     except TokenFetchError as exc:
         text = str(exc)
         risk = ("RGV587" in text) or ("风控" in text) or ("被挤爆" in text)
-        title = "闲鱼 Cookie 触发风控（每日检测）" if risk else "闲鱼 Cookie 失效（每日检测）"
+        title = "闲鱼 Cookie 触发风控（定时检测）" if risk else "闲鱼 Cookie 失效（定时检测）"
         logger.error(f"Cookie 主动检测判定失效: {text}")
         notify_fn("cookie_expired", title, text)
         return 1
