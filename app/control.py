@@ -582,27 +582,11 @@ def create_app(
 
     # ---- Cookie ----
 
-    @app.post("/api/cookie")
-    def api_cookie():
-        if (err := _require_auth()) is not None:
-            return err
-        body = request.get_json(silent=True) or {}
-        cookie = str(body.get("cookie") or "").strip()
+    def _check_cookie(cookie: str) -> Dict[str, Any]:
+        """探测给定 Cookie 是否生效（复用 token_api 判定；不告警、不写文件）。"""
         if not cookie or cookie == "your_cookies_here":
-            return jsonify({"error": "cookie 为空或占位值"}), 400
-        ctx.cookie_set(cookie)
-        ctx.write_control(cookie=cookie)
-        return jsonify({"ok": True, "updated": True})
-
-    @app.post("/api/cookie/test")
-    def api_cookie_test():
-        """探测当前 Cookie 是否生效（复用 cookiewatch/token_api 判定，不告警、不写文件）。"""
-        if (err := _require_auth()) is not None:
-            return err
-        cookie = ctx.cookie_get()
-        if not cookie or cookie == "your_cookies_here":
-            return jsonify({"ok": False, "status": "no_cookie",
-                            "message": "尚未配置 Cookie，请先粘贴并更新"}), 400
+            return {"ok": False, "status": "no_cookie",
+                    "message": "尚未配置 Cookie，请先粘贴并更新"}
 
         import requests
         from .token_api import TokenFetchError
@@ -620,17 +604,38 @@ def create_app(
         except TokenFetchError as exc:
             text = str(exc)
             if any(k in text for k in ("RGV587", "风控", "被挤爆")):
-                return jsonify({"ok": False, "status": "risk",
-                                "message": "Cookie 触发平台风控（RGV587），已暂停相关操作：请稍后再试或换网/换号"})
-            return jsonify({"ok": False, "status": "invalid",
-                            "message": "Cookie 已失效，无法换取 token：请在平台上重新登录后复制新 Cookie"})
+                return {"ok": False, "status": "risk",
+                        "message": "Cookie 触发平台风控（RGV587），已暂停相关操作：请稍后再试或换网/换号"}
+            return {"ok": False, "status": "invalid",
+                    "message": "Cookie 已失效，无法换取 token：请在平台上重新登录后复制新 Cookie"}
         except requests.RequestException:
-            return jsonify({"ok": False, "status": "network",
-                            "message": "网络不可达，无法判定（非失效），请稍后重试"})
+            return {"ok": False, "status": "network",
+                    "message": "网络不可达，无法判定（非失效），请稍后重试"}
         except Exception as exc:  # noqa: BLE001
-            return jsonify({"ok": False, "status": "error",
-                            "message": f"探测异常: {type(exc).__name__}: {exc}"})
-        return jsonify({"ok": True, "status": "ok", "message": "Cookie 有效，能正常换取 token"})
+            return {"ok": False, "status": "error",
+                    "message": f"探测异常: {type(exc).__name__}: {exc}"}
+        return {"ok": True, "status": "ok", "message": "Cookie 有效，能正常换取 token"}
+
+    @app.post("/api/cookie")
+    def api_cookie():
+        if (err := _require_auth()) is not None:
+            return err
+        body = request.get_json(silent=True) or {}
+        cookie = str(body.get("cookie") or "").strip()
+        if not cookie or cookie == "your_cookies_here":
+            return jsonify({"error": "cookie 为空或占位值"}), 400
+        ctx.cookie_set(cookie)
+        ctx.write_control(cookie=cookie)
+        # 更新后立即验证新 Cookie 是否可用，结果随响应返回（页面据此提示）
+        return jsonify({"ok": True, "updated": True, "check": _check_cookie(cookie)})
+
+    @app.post("/api/cookie/test")
+    def api_cookie_test():
+        """探测当前 Cookie 是否生效（复用 cookiewatch/token_api 判定，不告警、不写文件）。"""
+        if (err := _require_auth()) is not None:
+            return err
+        result = _check_cookie(ctx.cookie_get())
+        return jsonify(result), (400 if result["status"] == "no_cookie" else 200)
 
     # ---- 触发动作 ----
 
@@ -862,7 +867,7 @@ _PAGE_HTML = r"""<!doctype html>
 
   <div class="card">
     <h3>运行凭证</h3>
-    <div class="muted">更新后 bot 约 5s 内热刷新并按新 Cookie 重连。粘贴完整 Cookie（含 unb=…）。</div>
+    <div class="muted">更新后 bot 约 5s 内热刷新并按新 Cookie 重连；更新时会自动验证新 Cookie 是否可用。粘贴完整 Cookie（含 unb=…）。</div>
     <textarea id="cookieBox" placeholder="unb=...; cookie2=...; ..."></textarea>
     <div class="row"><button onclick="testCookie()">测试当前 Cookie</button>
       <button class="primary" onclick="updateCookie()">更新 Cookie</button>
@@ -1029,9 +1034,12 @@ async function testCookie() {
 }
 async function updateCookie() {
   const cookie = $('cookieBox').value.trim();
+  setMsg('cookieMsg', '正在更新并验证 …');
   try {
     const r = await api('POST', '/api/cookie', {cookie});
-    setMsg('cookieMsg', r.ok ? '已更新，bot 将自动热刷新' : '', true);
+    const chk = r.check || {};
+    if (chk.ok) setMsg('cookieMsg', '已更新，Cookie 验证通过，bot 将自动热刷新', true);
+    else setMsg('cookieMsg', '已更新，但验证未通过：' + (chk.message || '未知') + '（bot 仍按新 Cookie 重连）', false);
   } catch (e) { setMsg('cookieMsg', e.message, false); }
 }
 async function backfill() {

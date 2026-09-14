@@ -50,6 +50,7 @@ def _make(tmp_path, fakes=None):
     _seed_products(products)
     merged = dict(fakes or {})
     merged.setdefault("list_fn", lambda c, m: [])  # 在售为空，避免触网
+    merged.setdefault("cookie_check", lambda c, m: "tok")  # POST /api/cookie 会验活，默认离线通过
     app = create_app(
         products_path=products,
         relist_db=tmp_path / "data" / "relist.db",

@@ -45,6 +45,7 @@ def _make(tmp_path, fakes=None, seed=True):
     control = tmp_path / "data" / "control.json"
     merged = dict(fakes or {})
     merged.setdefault("list_fn", lambda c, m: [])  # 默认离线：在售列表为空
+    merged.setdefault("cookie_check", lambda c, m: "tok")  # POST /api/cookie 会验活，默认离线通过
     app = create_app(
         products_path=products,
         relist_db=relist_db,
@@ -95,6 +96,32 @@ def test_cookie_update_writes_control_and_denies_empty(tmp_path):
     data = json.loads(control.read_text(encoding="utf-8"))
     assert data["cookie"] == "unb=1; cookie2=abc"
     assert data["products_version"] == 0
+
+
+def test_cookie_update_returns_passing_check(tmp_path):
+    app, _ctx, _control = _make(tmp_path)  # 默认 cookie_check 通过
+    client = app.test_client()
+    body = client.post(
+        "/api/cookie", json={"cookie": "unb=1; cookie2=abc"}, headers=_headers()
+    ).get_json()
+    assert body["ok"] is True and body["updated"] is True
+    assert body["check"]["ok"] is True and body["check"]["status"] == "ok"
+
+
+def test_cookie_update_still_accepts_invalid_cookie_but_reports_check(tmp_path):
+    from app.token_api import TokenFetchError
+
+    def bad(c, m):
+        raise TokenFetchError("token 接口返回失败: FAIL_SYS_SESSION_EXPIRED")
+
+    app, _ctx, control = _make(tmp_path, fakes={"cookie_check": bad})
+    client = app.test_client()
+    resp = client.post("/api/cookie", json={"cookie": "unb=stale"}, headers=_headers())
+    assert resp.status_code == 200  # 已落盘（bot 会按新 cookie 重连），仅回报验证未通过
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert body["check"]["ok"] is False and body["check"]["status"] == "invalid"
+    assert json.loads(control.read_text(encoding="utf-8"))["cookie"] == "unb=stale"
 
 
 def test_product_crud_bumps_version_and_reflects(tmp_path):
