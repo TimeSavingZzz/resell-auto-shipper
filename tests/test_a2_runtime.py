@@ -9,12 +9,20 @@ import asyncio
 import json
 import sqlite3
 
+import pytest
+
 from app.alerter import Alerter
 from app import config as config_mod
 from app.config import Config
 from app.catalog import Catalog
 import app.client as client_mod
 from app.client import ListenerClient
+
+
+@pytest.fixture(autouse=True)
+def _isolate_alert_settings(monkeypatch, tmp_path):
+    """告警开关文件默认不存在 → 邮件默认开启；避免读到真实 data/ 下的开关。"""
+    monkeypatch.setenv("ALERT_SETTINGS_PATH", str(tmp_path / "no_such_alert_settings.json"))
 
 
 def _run(coro):
@@ -179,6 +187,32 @@ def test_alerter_log_with_email_still_pushes_email(monkeypatch):
     monkeypatch.setattr(a, "_push_email", lambda t, x: calls.append(t))
     a.notify("x", "标题")  # log 主渠道照常记日志，邮件作为附加照发
     assert calls == ["标题"]
+
+
+def test_alerter_email_switch_file_off(monkeypatch, tmp_path):
+    p = tmp_path / "alert_settings.json"
+    p.write_text('{"email_enabled": false}', encoding="utf-8")
+    monkeypatch.setenv("ALERT_SETTINGS_PATH", str(p))
+    a = _email_alerter()
+    calls = []
+    monkeypatch.setattr(a, "_push_serverchan", lambda t, x: calls.append(("sc", t)))
+    monkeypatch.setattr(a, "_push_email", lambda t, x: calls.append(("em", t)))
+    a.notify("x", "仍走主渠道")
+    assert calls == [("sc", "仍走主渠道")]  # 邮件被开关关掉，其它渠道不受影响
+
+
+def test_alerter_email_switch_hot_reload(monkeypatch, tmp_path):
+    p = tmp_path / "alert_settings.json"
+    monkeypatch.setenv("ALERT_SETTINGS_PATH", str(p))
+    a = _email_alerter(throttle=0)
+    calls = []
+    monkeypatch.setattr(a, "_push_serverchan", lambda t, x: calls.append(("sc", t)))
+    monkeypatch.setattr(a, "_push_email", lambda t, x: calls.append(("em", t)))
+    p.write_text('{"email_enabled": false}', encoding="utf-8")
+    a.notify("k1", "关")
+    p.write_text('{"email_enabled": true}', encoding="utf-8")
+    a.notify("k2", "开")  # 同一实例、未重启：读文件即生效
+    assert calls == [("sc", "关"), ("sc", "开"), ("em", "开")]
 
 
 def test_alerter_throttle_covers_all_targets(monkeypatch):

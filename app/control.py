@@ -95,6 +95,7 @@ class Context:
         relist_db: Path,
         control_path: Path,
         deliveries_db: Path,
+        alert_settings_path: Path,
         cookie_get: Callable[[], str],
         cookie_set: Callable[[str], None],
         myid: Callable[[], str],
@@ -105,6 +106,7 @@ class Context:
         self.relist_db = Path(relist_db)
         self.control_path = Path(control_path)
         self.deliveries_db = Path(deliveries_db)
+        self.alert_settings_path = Path(alert_settings_path)
         self.cookie_get = cookie_get
         self.cookie_set = cookie_set
         self.myid = myid
@@ -193,6 +195,23 @@ class Context:
             "products_version": self.products_version,
         }
         _atomic_write(self.control_path, json.dumps(payload, ensure_ascii=False))
+
+    # ---- 告警开关（bot / cookiewatch 每次推送时读同一文件）----
+
+    def load_alert_settings(self) -> Dict[str, Any]:
+        try:
+            data = json.loads(self.alert_settings_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        return {"email_enabled": bool(data.get("email_enabled", True))}
+
+    def save_alert_settings(self, *, email_enabled: bool) -> None:
+        _atomic_write(
+            self.alert_settings_path,
+            json.dumps({"email_enabled": bool(email_enabled)}, ensure_ascii=False) + "\n",
+        )
 
 
 # ---- 登记已发布商品：链接解析 / 只读抓详情 / 写库 ----
@@ -298,6 +317,7 @@ def create_app(
     relist_db: Optional[Path] = None,
     control_path: Optional[Path] = None,
     deliveries_db: Optional[Path] = None,
+    alert_settings_path: Optional[Path] = None,
     admin_token: Optional[str] = None,
     fakes: Optional[Dict[str, Callable]] = None,
     admin_token_persist: Optional[Callable[[str], None]] = None,
@@ -312,6 +332,10 @@ def create_app(
         relist_db=Path(relist_db) if relist_db else PROJECT_ROOT / "data" / "relist.db",
         control_path=Path(control_path) if control_path else PROJECT_ROOT / "data" / "control.json",
         deliveries_db=Path(deliveries_db) if deliveries_db else PROJECT_ROOT / "data" / "deliveries.db",
+        alert_settings_path=(
+            Path(alert_settings_path) if alert_settings_path
+            else PROJECT_ROOT / "data" / "alert_settings.json"
+        ),
         cookie_get=lambda: config.cookies_str,
         cookie_set=lambda c: config.set_cookie(c),
         myid=lambda: config.myid,
@@ -637,6 +661,33 @@ def create_app(
         result = _check_cookie(ctx.cookie_get())
         return jsonify(result), (400 if result["status"] == "no_cookie" else 200)
 
+    # ---- 告警开关 ----
+
+    @app.get("/api/alert-settings")
+    def api_alert_settings():
+        if (err := _require_auth()) is not None:
+            return err
+        settings = ctx.load_alert_settings()
+        configured = bool(
+            os.getenv("ALERT_SMTP_USER", "").strip()
+            and os.getenv("ALERT_SMTP_PASS", "").strip()
+            and os.getenv("ALERT_EMAIL_TO", "").strip()
+        )
+        return jsonify({"email_enabled": settings["email_enabled"],
+                        "email_configured": configured})
+
+    @app.post("/api/alert-settings")
+    def api_alert_settings_update():
+        """切换邮件提醒开关：写 data/alert_settings.json，bot / cookiewatch 下次推送即生效。"""
+        if (err := _require_auth()) is not None:
+            return err
+        body = request.get_json(silent=True) or {}
+        if "email_enabled" not in body:
+            return jsonify({"error": "缺少 email_enabled"}), 400
+        enabled = bool(body["email_enabled"])
+        ctx.save_alert_settings(email_enabled=enabled)
+        return jsonify({"ok": True, "email_enabled": enabled})
+
     # ---- 触发动作 ----
 
     @app.post("/api/backfill")
@@ -875,6 +926,15 @@ _PAGE_HTML = r"""<!doctype html>
   </div>
 
   <div class="card">
+    <h3>提醒设置</h3>
+    <div class="muted">邮件提醒可随时开关；改动立即对 bot 和定时 Cookie 检测生效，无需重启。关闭后仍保留日志（及其它已配置的主渠道）。</div>
+    <div class="row">
+      <button id="emailToggle" onclick="toggleEmailAlerts()">读取中…</button>
+      <span id="alertMsg" class="muted"></span>
+    </div>
+  </div>
+
+  <div class="card">
     <h3>手动动作（写操作）</h3>
     <div class="row">
       <button class="primary" onclick="backfill()">补货到在线 N 份</button>
@@ -917,7 +977,7 @@ function api(method, url, body) {
 function showGate() { $('app').style.display = 'none'; $('gate').style.display = 'block'; }
 function enterApp() { $('gate').style.display = 'none'; $('app').style.display = 'block'; }
 async function boot() {
-  try { await api('GET', '/api/products'); enterApp(); await refresh(); }
+  try { await api('GET', '/api/products'); enterApp(); await refresh(); loadAlertSettings(); }
   catch (e) { showGate(); }
 }
 async function login() {
@@ -929,6 +989,7 @@ async function login() {
     $('token').value = '';
     enterApp();
     await refresh();
+    loadAlertSettings();
   } catch (e) {
     if (e.message === '密码错误') { $('gateMsg').textContent = '密码错误，请重试'; }
     else if (e.message === 'unauthorized') { $('gateMsg').textContent = '密码错误，请重试'; }
@@ -1041,6 +1102,34 @@ async function updateCookie() {
     if (chk.ok) setMsg('cookieMsg', '已更新，Cookie 验证通过，bot 将自动热刷新', true);
     else setMsg('cookieMsg', '已更新，但验证未通过：' + (chk.message || '未知') + '（bot 仍按新 Cookie 重连）', false);
   } catch (e) { setMsg('cookieMsg', e.message, false); }
+}
+let emailAlertsEnabled = null;
+function renderEmailToggle() {
+  const b = $('emailToggle');
+  if (emailAlertsEnabled === null) { b.textContent = '读取中…'; return; }
+  b.textContent = emailAlertsEnabled ? '邮件提醒：已开启 · 点击关闭' : '邮件提醒：已关闭 · 点击开启';
+  b.className = emailAlertsEnabled ? 'primary' : '';
+}
+async function loadAlertSettings() {
+  try {
+    const r = await api('GET', '/api/alert-settings');
+    emailAlertsEnabled = !!r.email_enabled;
+    renderEmailToggle();
+    if (!r.email_configured) {
+      setMsg('alertMsg', '（.env 未配齐 SMTP/收件邮箱，开启后也不会真正发出）', false);
+    }
+  } catch (e) { setMsg('alertMsg', e.message, false); }
+}
+async function toggleEmailAlerts() {
+  if (emailAlertsEnabled === null) return;
+  const next = !emailAlertsEnabled;
+  if (!confirm(next ? '开启邮件提醒？' : '关闭邮件提醒？关闭后不再发送任何告警邮件。')) return;
+  try {
+    const r = await api('POST', '/api/alert-settings', {email_enabled: next});
+    emailAlertsEnabled = !!r.email_enabled;
+    renderEmailToggle();
+    setMsg('alertMsg', next ? '邮件提醒已开启' : '邮件提醒已关闭', true);
+  } catch (e) { setMsg('alertMsg', e.message, false); }
 }
 async function backfill() {
   if (!confirm('将对所有启用商品各补足在线份数（真实发布）。确认？')) return;

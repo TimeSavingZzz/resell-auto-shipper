@@ -17,15 +17,44 @@ notify(kind, title, text)：同一 kind 在 ALERT_THROTTLE（秒，默认 600）
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Dict, Optional
 
 import requests
 
 DEFAULT_CHANNEL = "log"
 DEFAULT_THROTTLE = 600
+DEFAULT_EMAIL_ENABLED = True
+
+
+def settings_path() -> Path:
+    """告警开关文件路径：ALERT_SETTINGS_PATH 可覆盖（测试用），默认 data/alert_settings.json。"""
+    override = os.getenv("ALERT_SETTINGS_PATH", "").strip()
+    if override:
+        return Path(override)
+    from .config import PROJECT_ROOT
+
+    return PROJECT_ROOT / "data" / "alert_settings.json"
+
+
+def read_alert_settings() -> Dict[str, object]:
+    """读告警开关；文件缺失/损坏 → 默认开启邮件（兼容旧部署）。"""
+    try:
+        data = json.loads(settings_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return {"email_enabled": bool(data.get("email_enabled", DEFAULT_EMAIL_ENABLED))}
+
+
+def email_enabled() -> bool:
+    """邮件是否开启。每次调用都读文件：管理页开关后 bot / cookiewatch 立刻生效。"""
+    return bool(read_alert_settings()["email_enabled"])
 
 
 def _log() -> object:
@@ -88,7 +117,9 @@ class Alerter:
 
     @property
     def _email_ok(self) -> bool:
-        return bool(self.smtp_host and self.smtp_user and self.smtp_pass and self.email_to)
+        if not (self.smtp_host and self.smtp_user and self.smtp_pass and self.email_to):
+            return False
+        return email_enabled()  # 管理页开关：每次推送都重新读，无需重启进程
 
     def _push_targets(self) -> list:
         """当前实际会外推的渠道：主渠道(serverchan/pushplus) + 附加 email。"""

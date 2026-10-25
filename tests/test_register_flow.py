@@ -56,6 +56,7 @@ def _make(tmp_path, fakes=None):
         relist_db=tmp_path / "data" / "relist.db",
         control_path=tmp_path / "data" / "control.json",
         deliveries_db=tmp_path / "data" / "deliveries.db",
+        alert_settings_path=tmp_path / "data" / "alert_settings.json",
         admin_token=TOKEN,
         fakes=merged,
     )

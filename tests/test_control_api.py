@@ -51,6 +51,7 @@ def _make(tmp_path, fakes=None, seed=True):
         relist_db=relist_db,
         control_path=control,
         deliveries_db=deliveries,
+        alert_settings_path=tmp_path / "data" / "alert_settings.json",
         admin_token=TOKEN,
         fakes=merged,
     )
@@ -297,3 +298,40 @@ def test_cookie_test_network_indeterminate(tmp_path):
     _set_cookie(client)
     resp = client.post("/api/cookie/test", headers=_headers()).get_json()
     assert resp["ok"] is False and resp["status"] == "network"
+
+
+# ---- 邮件提醒开关 ----
+
+def test_alert_settings_requires_auth(tmp_path):
+    app, _ctx, _control = _make(tmp_path)
+    client = app.test_client()
+    assert client.get("/api/alert-settings").status_code == 401
+    assert client.post("/api/alert-settings", json={"email_enabled": False}).status_code == 401
+
+
+def test_alert_settings_default_on_and_toggle(tmp_path):
+    app, _ctx, _control = _make(tmp_path)
+    client = app.test_client()
+
+    # 文件不存在 → 默认开启（兼容旧部署）
+    first = client.get("/api/alert-settings", headers=_headers()).get_json()
+    assert first["email_enabled"] is True
+
+    off = client.post("/api/alert-settings", json={"email_enabled": False}, headers=_headers())
+    assert off.status_code == 200 and off.get_json()["email_enabled"] is False
+    path = tmp_path / "data" / "alert_settings.json"
+    assert json.loads(path.read_text(encoding="utf-8")) == {"email_enabled": False}
+
+    # 重建 app（模拟 admin 重启 / 另一进程）仍读到关闭
+    app2, _ctx2, _c2 = _make(tmp_path)
+    got = app2.test_client().get("/api/alert-settings", headers=_headers()).get_json()
+    assert got["email_enabled"] is False
+
+    on = client.post("/api/alert-settings", json={"email_enabled": True}, headers=_headers())
+    assert on.get_json()["email_enabled"] is True
+
+
+def test_alert_settings_payload_validation(tmp_path):
+    app, _ctx, _control = _make(tmp_path)
+    client = app.test_client()
+    assert client.post("/api/alert-settings", json={}, headers=_headers()).status_code == 400
